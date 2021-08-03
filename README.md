@@ -1,2 +1,2 @@
 # mutual-teaching
-Mutual-(Mean)-Teaching, ICLR 2020
+Implementation of Mutual-(Mean)-Teaching, ICLR 2020
