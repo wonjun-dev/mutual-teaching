@@ -10,6 +10,8 @@ class Market1501(Dataset):
 
         data_dir = os.path.join(root_dir, data_name)
         file_names = os.listdir(data_dir)
+        # TODO make label for supervised learning.
+
         self.files_dir = [os.path.join(data_dir, f) for f in file_names if ".jpg" in f]
 
         self.preprocess = transforms.Compose(

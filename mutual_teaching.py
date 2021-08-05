@@ -1,6 +1,10 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils import data
+from torch.utils.data import DataLoader
+
+from utils.data import Market1501
 
 
 class MutualTeaching:
@@ -14,14 +18,13 @@ class MutualTeaching:
         self.loss_fn = nn.CrossEntropyLoss()
         self.lambda_id = 0.5
 
-    def training_loop(self, data):
+    def training_loop(self, dataloader):
         # Generate hard pseudo label
         # TODO use clustering algorithm
-        pseudo_label = torch.arange(0, 100) % 3
+        pseudo_label = self._generate_pseudo_labels(dataloader.dataset.__len__())
         # iteration
-        for idx, x in enumerate(data):
-            x = torch.unsqueeze(x, 0)
-            y = torch.unsqueeze(pseudo_label[idx], 0)
+        for idx, x in enumerate(dataloader):
+            y = pseudo_label[idx * x.shape[0] : (idx + 1) * x.shape[0]]
             x_prime = self.augment_fn(x)
             out_1, out_2 = self._forward(x, x_prime)
             hard_loss_1, hard_loss_2 = self._calculate_hard_loss(out_1, out_2, y)
@@ -56,20 +59,28 @@ class MutualTeaching:
     def _mean_parameters(self):
         pass
 
+    def _generate_pseudo_labels(self, size):
+        pseudo_label = torch.arange(0, size) % 3
+        return pseudo_label
+
 
 def main():
-    model_1 = nn.Linear(10, 3)
-    model_2 = nn.Linear(10, 3)
+    model_1 = nn.Sequential(nn.Conv2d(3, 10, 3), nn.ReLU(), nn.Flatten(), nn.Linear(78120, 3))
+    model_2 = nn.Sequential(nn.Conv2d(3, 10, 3), nn.ReLU(), nn.Flatten(), nn.Linear(78120, 3))
     optimizer = torch.optim.Adam(
         [{"params": model_1.parameters()}, {"params": model_2.parameters()}]
     )
     augment_fn = lambda x: x + 1  # tmp function
-    dummy_data = torch.randn(100, 10)
+
+    train_dataset = Market1501(
+        "datasets/market1501/Market-1501-v15.09.15", data_name="bounding_box_train"
+    )
+    train_loader = DataLoader(train_dataset, batch_size=128)
 
     mt = MutualTeaching(model_1, model_2, optimizer, augment_fn)
 
     for e in range(10):
-        mt.training_loop(dummy_data)
+        mt.training_loop(train_loader)
 
 
 if __name__ == "__main__":
