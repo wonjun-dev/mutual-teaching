@@ -1,18 +1,16 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim.optimizer import Optimizer
-import numpy as np
 
 
 class MutualTeaching:
-    def __init__(self, model_1, model_2, optimizer, augment_func):
+    def __init__(self, model_1, model_2, optimizer, augment_fn):
         self.model_1 = model_1
         self.model_2 = model_2
         self.mean_model_1 = model_1.parameters()
         self.mean_model_2 = model_2.parameters()
         self.optimizer = optimizer
-        self.augment_fn = augment_func
+        self.augment_fn = augment_fn
         self.loss_fn = nn.CrossEntropyLoss()
         self.lambda_id = 0.5
 
