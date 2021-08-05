@@ -13,6 +13,7 @@ class Market1501(Dataset):
         # TODO make label for supervised learning.
 
         self.files_dir = [os.path.join(data_dir, f) for f in file_names if ".jpg" in f]
+        self.pseudo_labels = None
 
         self.preprocess = transforms.Compose(
             [
@@ -27,7 +28,12 @@ class Market1501(Dataset):
     def __getitem__(self, idx):
         image = Image.open(self.files_dir[idx])
         image = self.preprocess(image)
-        return image
+        if self.pseudo_labels is not None:
+            y_tilde = self.pseudo_labels[idx]
+        else:
+            y_tilde = []
+
+        return image, y_tilde
 
 
 class DukeMTMC(Dataset):
