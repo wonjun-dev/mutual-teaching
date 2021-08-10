@@ -8,6 +8,7 @@ import numpy as np
 
 from utils.data import Market1501
 from utils.clustering import KMeansCluster
+from model import ReidResNet
 
 
 class MutualTeaching:
@@ -24,7 +25,6 @@ class MutualTeaching:
 
     def training_loop(self, dataloader):
         # Generate hard pseudo label
-        # TODO use clustering algorithm
         self._generate_pseudo_labels(dataloader)
         # iteration
         for idx, (x, y_tilde) in enumerate(dataloader):
@@ -35,6 +35,7 @@ class MutualTeaching:
             loss = (1 - self.lambda_id) * (hard_loss_1 + hard_loss_2) + self.lambda_id * (
                 soft_loss_1 + soft_loss_2
             )
+            print(loss.item())
             self._step(loss)
             # self._mean_parameters()
 
@@ -50,8 +51,12 @@ class MutualTeaching:
         return loss_1, loss_2
 
     def _calculate_soft_loss(self, out_1, out_2):
-        loss_1 = torch.mean(torch.sum(F.softmax(out_2, dim=1) * F.log_softmax(out_1, dim=1), dim=1))
-        loss_2 = torch.mean(torch.sum(F.softmax(out_1, dim=1) * F.log_softmax(out_2, dim=1), dim=1))
+        loss_1 = torch.mean(
+            torch.sum(-F.softmax(out_2, dim=1).detach() * F.log_softmax(out_1, dim=1), dim=1)
+        )
+        loss_2 = torch.mean(
+            torch.sum(-F.softmax(out_1, dim=1).detach() * F.log_softmax(out_2, dim=1), dim=1)
+        )
         return loss_1, loss_2
 
     def _step(self, loss):
@@ -67,7 +72,8 @@ class MutualTeaching:
         print("Encoding features for clustering.")
         full_features = []
         for samples, _ in dataloader:
-            batch_features = self.model_1(samples).detach().numpy()
+            self.model_1(samples)
+            batch_features = self.model_1.hooks.numpy()
             for f in batch_features:
                 full_features.append(f)
         full_features = np.array(full_features, dtype=object)
@@ -77,8 +83,8 @@ class MutualTeaching:
 
 
 def main():
-    model_1 = nn.Sequential(nn.Conv2d(3, 10, 3), nn.ReLU(), nn.Flatten(), nn.Linear(78120, 500))
-    model_2 = nn.Sequential(nn.Conv2d(3, 10, 3), nn.ReLU(), nn.Flatten(), nn.Linear(78120, 500))
+    model_1 = ReidResNet()
+    model_2 = ReidResNet()
     model_cluster = KMeansCluster(n_clusters=500)
     optimizer = torch.optim.Adam(
         [{"params": model_1.parameters()}, {"params": model_2.parameters()}]
