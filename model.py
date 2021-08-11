@@ -1,10 +1,6 @@
-from numpy.lib.arraysetops import isin
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.nn.modules.flatten import Flatten
-from torch.nn.modules.module import register_module_forward_hook
-from torch.nn.modules.pooling import AdaptiveAvgPool2d
 from torchvision.models.resnet import resnet50 as _resnet50
 
 

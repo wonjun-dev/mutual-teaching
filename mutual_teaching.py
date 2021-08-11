@@ -1,11 +1,8 @@
 import copy
 
 import torch
-from torch._C import device
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.modules import module
-from torch.utils import data
 from torch.utils.data import DataLoader
 import numpy as np
 
