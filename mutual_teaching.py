@@ -3,6 +3,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils import data
 from torch.utils.data import DataLoader
 import numpy as np
 
@@ -12,7 +13,7 @@ from model import ReidResNet
 
 
 class MutualTeaching:
-    def __init__(self, model_1, model_2, model_cluster, optimizer, augment_fn, device):
+    def __init__(self, model_1, model_2, model_cluster, optimizer, device):
         self.model_1 = model_1
         self.model_2 = model_2
         self.model_cluster = model_cluster
@@ -25,27 +26,34 @@ class MutualTeaching:
             param.detach_()
 
         self.optimizer = optimizer
-        self.augment_fn = augment_fn
         self.device = device
         self.loss_fn = nn.CrossEntropyLoss()
+        self.triplet_loss_fn = nn.BCELoss()
         self.lambda_id = 0.5
 
     def training_loop(self, dataloader, epoch):
         # Generate hard pseudo label
         self._generate_pseudo_labels(dataloader, self.device)
         # iteration
-        for idx, (x, y_tilde) in enumerate(dataloader):
-            x, y_tilde = x.to(self.device), y_tilde.to(self.device)
-            x_prime = self.augment_fn(x)
-            out_1, out_2, mean_out_1, mean_out_2 = self._forward(x, x_prime)
+        dataloader.dataset.mutual = True
+        for idx, (x_1, x_2, y_tilde) in enumerate(dataloader):
+            x_1, x_2, y_tilde = x_1.to(self.device), x_2.to(self.device), y_tilde.to(self.device)
+            out_1, out_2, mean_out_1, mean_out_2 = self._forward(x_1, x_2)
             hard_loss_1, hard_loss_2 = self._calculate_hard_loss(out_1, out_2, y_tilde)
             soft_loss_1, soft_loss_2 = self._calculate_soft_loss(
                 out_1, out_2, mean_out_1, mean_out_2
             )
-            loss = (1 - self.lambda_id) * (hard_loss_1 + hard_loss_2) + self.lambda_id * (
+            hard_tri_loss_1 = self._calculate_hard_triplet_loss(out_1, y_tilde)
+            hard_tri_loss_2 = self._calculate_hard_triplet_loss(out_2, y_tilde)
+
+            id_loss = (1 - self.lambda_id) * (hard_loss_1 + hard_loss_2) + self.lambda_id * (
                 soft_loss_1 + soft_loss_2
             )
-            print(loss.item())
+
+            tri_loss = hard_tri_loss_1 + hard_tri_loss_2
+            print(id_loss.item())
+            print(tri_loss.item())
+            loss = id_loss + tri_loss
             self._step(loss)
 
             # self._mean_parameters()
@@ -56,12 +64,12 @@ class MutualTeaching:
                 self.model_2, self.mean_model_2, step=epoch * len(dataloader) + idx
             )
 
-    def _forward(self, x, x_prime):
-        out_1 = self.model_1(x)
-        out_2 = self.model_2(x_prime)
+    def _forward(self, x_1, x_2):
+        out_1 = self.model_1(x_1)
+        out_2 = self.model_2(x_2)
 
-        mean_out_1 = self.mean_model_1(x)
-        mean_out_2 = self.mean_model_2(x_prime)
+        mean_out_1 = self.mean_model_1(x_1)
+        mean_out_2 = self.mean_model_2(x_2)
 
         return out_1, out_2, mean_out_1, mean_out_2
 
@@ -79,6 +87,43 @@ class MutualTeaching:
         )
         return loss_1, loss_2
 
+    def _calculate_hard_triplet_loss(self, out, y_tilde):
+
+        triplet_loss = torch.tensor(0, dtype=torch.float)
+        hard_pos_dist = torch.tensor(0, dtype=torch.float)
+        hard_neg_dist = torch.tensor(0, dtype=torch.float)
+
+        # get hardest positive/negative samples in mini-batch.
+        for sample, y in zip(out, y_tilde):
+            # find idxs positive/negative
+            pos_idxs = (y == y_tilde).nonzero(as_tuple=True)[0]
+            neg_idxs = (y != y_tilde).nonzero(as_tuple=True)[0]
+
+            for idx in pos_idxs:
+                pos = out[idx]
+                print("s", sample)
+                print("p", pos)
+                dist = torch.norm(sample - pos, p=2)  # l2-norm
+                print("d", dist)
+                if dist > hard_pos_dist:
+                    hard_pos_dist = dist
+
+            for idx in neg_idxs:
+                neg = out[idx]
+                dist = torch.norm(sample - neg, p=2)  # l2-norm
+                if dist > hard_neg_dist:
+                    hard_neg_dist = dist
+
+            # calculate
+            pred = hard_neg_dist.exp() / (hard_pos_dist.exp() + hard_neg_dist.exp())
+            print(pred)
+            print(torch.tensor(1, dtype=torch.float, device=self.device))
+            triplet_loss += self.triplet_loss_fn(
+                pred, torch.tensor(1, dtype=torch.float, device=self.device)
+            )
+
+        return triplet_loss
+
     def _step(self, loss):
         self.optimizer.zero_grad()
         loss.backward()
@@ -91,8 +136,9 @@ class MutualTeaching:
             mean_param.data.mul_(alpha).add_(param.data, alpha=1 - alpha)
 
     def _generate_pseudo_labels(self, dataloader, device):
-        # pseudo_label = torch.arange(0, size) % 3
+        # TODO Use average feature of two mean models
         print("Encoding features for clustering.")
+        dataloader.dataset.mutual = False
         full_features = []
         for samples, _ in dataloader:
             samples = samples.to(device)
@@ -100,8 +146,8 @@ class MutualTeaching:
             batch_features = self.mean_model_1.hooks.numpy()
             for f in batch_features:
                 full_features.append(f)
-        full_features = np.array(full_features, dtype=object)
 
+        full_features = np.array(full_features, dtype=object)
         pseudo_label = self.model_cluster.generate_pseudo_labels(full_features)
         dataloader.dataset.pseudo_labels = torch.tensor(pseudo_label, dtype=torch.long)
 
@@ -120,11 +166,11 @@ def main():
     augment_fn = lambda x: x + 1  # tmp function
 
     train_dataset = Market1501(
-        "datasets/market1501/Market-1501-v15.09.15", data_name="bounding_box_train"
+        "datasets/market1501/Market-1501-v15.09.15", data_name="bounding_box_train", mutual=True
     )
-    train_loader = DataLoader(train_dataset, batch_size=128)
+    train_loader = DataLoader(train_dataset, batch_size=32)
 
-    mt = MutualTeaching(model_1, model_2, model_cluster, optimizer, augment_fn, device)
+    mt = MutualTeaching(model_1, model_2, model_cluster, optimizer, device)
 
     for e in range(10):
         mt.training_loop(train_loader, epoch=e)
