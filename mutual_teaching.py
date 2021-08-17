@@ -37,22 +37,23 @@ class MutualTeaching:
         # iteration
         dataloader.dataset.mutual = True
         for idx, (x_1, x_2, y_tilde) in enumerate(dataloader):
+            # y_tilde = torch.randint(0, 10, (32,))
             x_1, x_2, y_tilde = x_1.to(self.device), x_2.to(self.device), y_tilde.to(self.device)
             out_1, out_2, mean_out_1, mean_out_2 = self._forward(x_1, x_2)
             hard_loss_1, hard_loss_2 = self._calculate_hard_loss(out_1, out_2, y_tilde)
             soft_loss_1, soft_loss_2 = self._calculate_soft_loss(
                 out_1, out_2, mean_out_1, mean_out_2
             )
-            hard_tri_loss_1 = self._calculate_hard_triplet_loss(out_1, y_tilde)
-            hard_tri_loss_2 = self._calculate_hard_triplet_loss(out_2, y_tilde)
+            hard_tri_loss_1 = self._calculate_hard_triplet_loss(self.model_1.hooks, y_tilde)
+            hard_tri_loss_2 = self._calculate_hard_triplet_loss(self.model_2.hooks, y_tilde)
 
             id_loss = (1 - self.lambda_id) * (hard_loss_1 + hard_loss_2) + self.lambda_id * (
                 soft_loss_1 + soft_loss_2
             )
 
             tri_loss = hard_tri_loss_1 + hard_tri_loss_2
-            print(id_loss.item())
-            print(tri_loss.item())
+            print("id_loss", id_loss.item())
+            print("tri_loss", tri_loss.item())
             loss = id_loss + tri_loss
             self._step(loss)
 
@@ -87,42 +88,53 @@ class MutualTeaching:
         )
         return loss_1, loss_2
 
-    def _calculate_hard_triplet_loss(self, out, y_tilde):
+    def _calculate_hard_triplet_loss(self, hook, y_tilde):
 
+        target = torch.tensor(1, dtype=torch.float)
         triplet_loss = torch.tensor(0, dtype=torch.float)
-        hard_pos_dist = torch.tensor(0, dtype=torch.float)
-        hard_neg_dist = torch.tensor(0, dtype=torch.float)
+        cnt = 0
 
         # get hardest positive/negative samples in mini-batch.
-        for sample, y in zip(out, y_tilde):
+        for sample, y in zip(hook, y_tilde):
+            hard_pos_dist = torch.tensor(0, dtype=torch.float)
+            hard_neg_dist = torch.tensor(float("inf"), dtype=torch.float)
             # find idxs positive/negative
             pos_idxs = (y == y_tilde).nonzero(as_tuple=True)[0]
             neg_idxs = (y != y_tilde).nonzero(as_tuple=True)[0]
+            # print("pidxs", pos_idxs)
+            # print("nidxs", neg_idxs)
+            if (
+                len(pos_idxs) > 1 and len(neg_idxs) > 1
+            ):  # only there are positivie samples in the mini-batch
+                cnt += 1
+                for idx in pos_idxs:
+                    pos = hook[idx]
+                    dist = torch.norm(sample - pos, p=2)  # l2-norm
 
-            for idx in pos_idxs:
-                pos = out[idx]
-                print("s", sample)
-                print("p", pos)
-                dist = torch.norm(sample - pos, p=2)  # l2-norm
-                print("d", dist)
-                if dist > hard_pos_dist:
-                    hard_pos_dist = dist
+                    if dist >= hard_pos_dist:
+                        hard_pos_dist = dist
+                # print("hpd", hard_pos_dist)
 
-            for idx in neg_idxs:
-                neg = out[idx]
-                dist = torch.norm(sample - neg, p=2)  # l2-norm
-                if dist > hard_neg_dist:
-                    hard_neg_dist = dist
+                for idx in neg_idxs:
+                    neg = hook[idx]
+                    dist = torch.norm(sample - neg, p=2)  # l2-norm
+                    if dist <= hard_neg_dist:
+                        hard_neg_dist = dist
 
-            # calculate
-            pred = hard_neg_dist.exp() / (hard_pos_dist.exp() + hard_neg_dist.exp())
-            print(pred)
-            print(torch.tensor(1, dtype=torch.float, device=self.device))
-            triplet_loss += self.triplet_loss_fn(
-                pred, torch.tensor(1, dtype=torch.float, device=self.device)
-            )
+                # calculate
+                pred = hard_neg_dist.exp() / (hard_pos_dist.exp() + hard_neg_dist.exp())
+                triplet_loss += self.triplet_loss_fn(pred, target)
 
-        return triplet_loss
+        if cnt > 0:
+            triplet_loss /= cnt
+
+        return triplet_loss.to(self.device)
+
+    def _calculate_soft_triplet_loss(self, out_1, out_2):
+        pass
+
+    def _calculate_softmax_distance(self, feature, y_tilde):
+        return
 
     def _step(self, loss):
         self.optimizer.zero_grad()
@@ -143,9 +155,11 @@ class MutualTeaching:
         for samples, _ in dataloader:
             samples = samples.to(device)
             self.mean_model_1(samples)
-            batch_features = self.mean_model_1.hooks.numpy()
-            for f in batch_features:
-                full_features.append(f)
+            self.mean_model_2(samples)
+            batch_features_1 = self.mean_model_1.hooks.numpy()
+            batch_features_2 = self.mean_model_2.hooks.numpy()
+            for f in zip(batch_features_1, batch_features_2):
+                full_features.append((f[0] + f[1]) / 2)
 
         full_features = np.array(full_features, dtype=object)
         pseudo_label = self.model_cluster.generate_pseudo_labels(full_features)

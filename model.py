@@ -37,7 +37,7 @@ class ReidResNet(nn.Module):
         return prob
 
     def _hook_fn(self, module, input, output):
-        self.hooks = output.cpu().detach()
+        self.hooks = output.cpu()
 
 
 if __name__ == "__main__":
