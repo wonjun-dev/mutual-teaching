@@ -3,13 +3,7 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.utils import data
-from torch.utils.data import DataLoader
 import numpy as np
-
-from utils.data import Market1501
-from utils.clustering import KMeansCluster
-from model import ReidResNet
 
 
 class MutualTeaching:
@@ -30,6 +24,8 @@ class MutualTeaching:
         self.loss_fn = nn.CrossEntropyLoss()
         self.triplet_loss_fn = nn.BCELoss()
         self.lambda_id = 0.5
+        self.lambda_tri = 0.5
+        self.alpha = 0
 
     def training_loop(self, dataloader, epoch):
         # Generate hard pseudo label
@@ -44,17 +40,30 @@ class MutualTeaching:
             soft_loss_1, soft_loss_2 = self._calculate_soft_loss(
                 out_1, out_2, mean_out_1, mean_out_2
             )
-            hard_tri_loss_1 = self._calculate_hard_triplet_loss(self.model_1.hooks, y_tilde)
-            hard_tri_loss_2 = self._calculate_hard_triplet_loss(self.model_2.hooks, y_tilde)
+
+            # Triplet loss
+            preds_1 = self._calculate_triplet_distance(self.model_1.hooks, y_tilde)
+            preds_2 = self._calculate_triplet_distance(self.model_2.hooks, y_tilde)
+            mean_preds_1 = self._calculate_triplet_distance(self.mean_model_1.hooks, y_tilde)
+            mean_preds_2 = self._calculate_triplet_distance(self.mean_model_2.hooks, y_tilde)
+
+            hard_tri_loss_1 = self._calculate_hard_triplet_loss(preds_1)
+            hard_tri_loss_2 = self._calculate_hard_triplet_loss(preds_2)
+            soft_tri_loss_1 = self._calculate_soft_triplet_loss(preds_1, mean_preds_2)
+            soft_tri_loss_2 = self._calculate_soft_triplet_loss(preds_2, mean_preds_1)
 
             id_loss = (1 - self.lambda_id) * (hard_loss_1 + hard_loss_2) + self.lambda_id * (
                 soft_loss_1 + soft_loss_2
             )
 
-            tri_loss = hard_tri_loss_1 + hard_tri_loss_2
-            print("id_loss", id_loss.item())
-            print("tri_loss", tri_loss.item())
+            tri_loss = (1 - self.lambda_tri) * (
+                hard_tri_loss_1 + hard_tri_loss_2
+            ) + self.lambda_tri * (soft_tri_loss_1 + soft_tri_loss_2)
+
             loss = id_loss + tri_loss
+            print(
+                f"loss: {loss.item()}, id_loss: {id_loss.item()}, tri_loss: {tri_loss.item()}, alpha: {self.alpha}"
+            )
             self._step(loss)
 
             # self._mean_parameters()
@@ -88,25 +97,55 @@ class MutualTeaching:
         )
         return loss_1, loss_2
 
-    def _calculate_hard_triplet_loss(self, hook, y_tilde):
-
-        target = torch.tensor(1, dtype=torch.float)
+    def _calculate_hard_triplet_loss(self, preds):
+        cnt = len(preds)
         triplet_loss = torch.tensor(0, dtype=torch.float)
-        cnt = 0
+
+        if cnt > 0:
+            preds = torch.tensor(preds)
+            preds = torch.nan_to_num(preds, nan=1.0)  # nan has 0 loss
+            targets = torch.ones(cnt)
+            triplet_loss = self.triplet_loss_fn(preds, targets)
+
+        return triplet_loss.to(self.device)
+
+    def _calculate_soft_triplet_loss(self, preds, targets):
+        cnt = len(preds)
+        triplet_loss = torch.tensor(0, dtype=torch.float)
+
+        if cnt > 0:
+            preds = torch.tensor(preds)
+            targets = torch.tensor(targets)
+
+            preds_nan_idx = self.__get_nan_idx(preds)
+            targets_nan_idx = self.__get_nan_idx(targets)
+
+            # nan has 0 loss
+            preds[preds_nan_idx] = 1.0
+            preds[targets_nan_idx] = 1.0
+            targets[preds_nan_idx] = 1.0
+            targets[targets_nan_idx] = 1.0
+
+            triplet_loss = self.triplet_loss_fn(preds, targets)
+
+        return triplet_loss.to(self.device)
+
+    def _calculate_triplet_distance(self, hook, y_tilde):
+        preds = list()
 
         # get hardest positive/negative samples in mini-batch.
         for sample, y in zip(hook, y_tilde):
             hard_pos_dist = torch.tensor(0, dtype=torch.float)
             hard_neg_dist = torch.tensor(float("inf"), dtype=torch.float)
+
             # find idxs positive/negative
             pos_idxs = (y == y_tilde).nonzero(as_tuple=True)[0]
             neg_idxs = (y != y_tilde).nonzero(as_tuple=True)[0]
-            # print("pidxs", pos_idxs)
-            # print("nidxs", neg_idxs)
+
             if (
                 len(pos_idxs) > 1 and len(neg_idxs) > 1
             ):  # only there are positivie samples in the mini-batch
-                cnt += 1
+
                 for idx in pos_idxs:
                     pos = hook[idx]
                     dist = torch.norm(sample - pos, p=2)  # l2-norm
@@ -123,18 +162,9 @@ class MutualTeaching:
 
                 # calculate
                 pred = hard_neg_dist.exp() / (hard_pos_dist.exp() + hard_neg_dist.exp())
-                triplet_loss += self.triplet_loss_fn(pred, target)
+                preds.append(pred)
 
-        if cnt > 0:
-            triplet_loss /= cnt
-
-        return triplet_loss.to(self.device)
-
-    def _calculate_soft_triplet_loss(self, out_1, out_2):
-        pass
-
-    def _calculate_softmax_distance(self, feature, y_tilde):
-        return
+        return preds
 
     def _step(self, loss):
         self.optimizer.zero_grad()
@@ -142,13 +172,11 @@ class MutualTeaching:
         self.optimizer.step()
 
     def _mean_parameters(self, model, mean_model, step: int, alpha: float = 0.999):
-        alpha = min(1 - 1 / (step + 1), alpha)
-        print("alpha: ", alpha)
+        self.alpha = min(1 - 1 / (step + 1), alpha)
         for mean_param, param in zip(mean_model.parameters(), model.parameters()):
-            mean_param.data.mul_(alpha).add_(param.data, alpha=1 - alpha)
+            mean_param.data.mul_(self.alpha).add_(param.data, alpha=1 - self.alpha)
 
     def _generate_pseudo_labels(self, dataloader, device):
-        # TODO Use average feature of two mean models
         print("Encoding features for clustering.")
         dataloader.dataset.mutual = False
         full_features = []
@@ -165,30 +193,6 @@ class MutualTeaching:
         pseudo_label = self.model_cluster.generate_pseudo_labels(full_features)
         dataloader.dataset.pseudo_labels = torch.tensor(pseudo_label, dtype=torch.long)
 
-
-def main():
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-    model_1 = ReidResNet()
-    model_2 = ReidResNet()
-    model_1.to(device)
-    model_2.to(device)
-    model_cluster = KMeansCluster(n_clusters=500)
-    optimizer = torch.optim.Adam(
-        [{"params": model_1.parameters()}, {"params": model_2.parameters()}]
-    )
-    augment_fn = lambda x: x + 1  # tmp function
-
-    train_dataset = Market1501(
-        "datasets/market1501/Market-1501-v15.09.15", data_name="bounding_box_train", mutual=True
-    )
-    train_loader = DataLoader(train_dataset, batch_size=32)
-
-    mt = MutualTeaching(model_1, model_2, model_cluster, optimizer, device)
-
-    for e in range(10):
-        mt.training_loop(train_loader, epoch=e)
-
-
-if __name__ == "__main__":
-    main()
+    def __get_nan_idx(self, input):
+        is_nan = torch.isnan(input)
+        return is_nan.nonzero(as_tuple=True)[0]
