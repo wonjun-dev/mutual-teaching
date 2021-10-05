@@ -3,6 +3,8 @@ import copy
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchvision import transforms
+
 import numpy as np
 
 
@@ -179,6 +181,14 @@ class MutualTeaching:
     def _generate_pseudo_labels(self, dataloader, device):
         print("Encoding features for clustering.")
         dataloader.dataset.mutual = False
+        dataloader.dataset.transform = transforms.Compose(
+            [
+                transforms.Resize((256, 128)),
+                transforms.Pad(padding=10),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ]
+        )
         full_features = []
         for samples, _ in dataloader:
             samples = samples.to(device)

@@ -1,7 +1,8 @@
 import torch
 from torch.utils.data import DataLoader
+from torchvision import transforms
 
-from utils.data import Market1501
+from utils.data import ImageDataset
 from utils.clustering import KMeansCluster
 from model import ReidResNet
 
@@ -20,10 +21,46 @@ def main():
         [{"params": model_1.parameters()}, {"params": model_2.parameters()}]
     )
 
-    train_dataset = Market1501(
-        "datasets/market1501/Market-1501-v15.09.15", data_name="bounding_box_train", mutual=True
+    # config
+    height = 256
+    width = 128
+    train_transform = transforms.Compose(
+        [
+            transforms.Resize((height, width)),
+            transforms.RandomHorizontalFlip(p=0.5),
+            transforms.Pad(padding=10),
+            transforms.RandomCrop((height, width)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            transforms.RandomErasing(p=0.5),
+        ]
     )
+    val_transform = transforms.Compose(
+        [
+            transforms.Resize((height, width)),
+            transforms.Pad(padding=10),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+        ]
+    )
+
+    train_dataset = ImageDataset(
+        root_dir="datasets/market1501/Market-1501-v15.09.15/pytorch",
+        data_name="train",
+        transform=train_transform,
+        mutual=True,
+    )
+    val_dataset = ImageDataset(
+        root_dir="datasets/market1501/Market-1501-v15.09.15/pytorch",
+        data_name="val",
+        transform=val_transform,
+        mutual=False,
+    )
+
     train_loader = DataLoader(train_dataset, batch_size=32)
+    val_loader = DataLoader(val_dataset, batch_size=32)
+    # Todo: cluster 생성을 위한 데이터로더
+    cluster_loader = None
 
     mt = MutualTeaching(model_1, model_2, model_cluster, optimizer, device)
 
