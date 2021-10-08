@@ -43,6 +43,7 @@ def main():
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
+    cluster_transform = val_transform
 
     train_dataset = ImageDataset(
         root_dir="datasets/market1501/Market-1501-v15.09.15/pytorch",
@@ -56,16 +57,21 @@ def main():
         transform=val_transform,
         mutual=False,
     )
+    cluster_dataset = ImageDataset(
+        root_dir="datasets/market1501/Market-1501-v15.09.15/pytorch",
+        data_name="train",
+        transform=cluster_transform,
+        mutual=False,
+    )
 
-    train_loader = DataLoader(train_dataset, batch_size=32)
-    val_loader = DataLoader(val_dataset, batch_size=32)
-    # Todo: cluster 생성을 위한 데이터로더
-    cluster_loader = None
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+    cluster_loader = DataLoader(cluster_dataset, batch_size=32, shuffle=False)
 
     mt = MutualTeaching(model_1, model_2, model_cluster, optimizer, device)
 
     for e in range(100):
-        mt.training_loop(train_loader, epoch=e)
+        mt.training_loop(train_loader, cluster_loader, epoch=e)
 
 
 if __name__ == "__main__":

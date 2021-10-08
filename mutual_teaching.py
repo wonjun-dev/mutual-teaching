@@ -1,9 +1,9 @@
 import copy
+from collections import OrderedDict
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torchvision import transforms
 
 import numpy as np
 
@@ -28,14 +28,17 @@ class MutualTeaching:
         self.lambda_id = 0.5
         self.lambda_tri = 0.5
         self.alpha = 0
+        self.pseudo_labels = OrderedDict()
 
-    def training_loop(self, dataloader, epoch):
+    def training_loop(self, train_loader, cluster_loader, epoch):
         # Generate hard pseudo label
-        self._generate_pseudo_labels(dataloader, self.device)
+        self._generate_pseudo_labels(cluster_loader, self.device)
         # iteration
-        dataloader.dataset.mutual = True
-        for idx, (x_1, x_2, y_tilde) in enumerate(dataloader):
+        train_loader.dataset.mutual = True
+        print(self.pseudo_labels)
+        for idx, (x_1, x_2, gt, key) in enumerate(train_loader):
             # y_tilde = torch.randint(0, 10, (32,))
+            y_tilde = torch.tensor([self.pseudo_labels[k] for k in key], dtype=torch.long)
             x_1, x_2, y_tilde = x_1.to(self.device), x_2.to(self.device), y_tilde.to(self.device)
             out_1, out_2, mean_out_1, mean_out_2 = self._forward(x_1, x_2)
             hard_loss_1, hard_loss_2 = self._calculate_hard_loss(out_1, out_2, y_tilde)
@@ -70,10 +73,10 @@ class MutualTeaching:
 
             # self._mean_parameters()
             self._mean_parameters(
-                self.model_1, self.mean_model_1, step=epoch * len(dataloader) + idx
+                self.model_1, self.mean_model_1, step=epoch * len(train_loader) + idx
             )
             self._mean_parameters(
-                self.model_2, self.mean_model_2, step=epoch * len(dataloader) + idx
+                self.model_2, self.mean_model_2, step=epoch * len(train_loader) + idx
             )
 
     def _forward(self, x_1, x_2):
@@ -180,28 +183,24 @@ class MutualTeaching:
 
     def _generate_pseudo_labels(self, dataloader, device):
         print("Encoding features for clustering.")
-        dataloader.dataset.mutual = False
-        dataloader.dataset.transform = transforms.Compose(
-            [
-                transforms.Resize((256, 128)),
-                transforms.Pad(padding=10),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-            ]
-        )
         full_features = []
-        for samples, _ in dataloader:
-            samples = samples.to(device)
-            self.mean_model_1(samples)
-            self.mean_model_2(samples)
+        for imgs, _, key in dataloader:
+            imgs = imgs.to(device)
+            self.mean_model_1(imgs)
+            self.mean_model_2(imgs)
             batch_features_1 = self.mean_model_1.hooks.numpy()
             batch_features_2 = self.mean_model_2.hooks.numpy()
             for f in zip(batch_features_1, batch_features_2):
                 full_features.append((f[0] + f[1]) / 2)
 
+            for k in key:
+                self.pseudo_labels[k] = None
+
         full_features = np.array(full_features, dtype=object)
         pseudo_label = self.model_cluster.generate_pseudo_labels(full_features)
-        dataloader.dataset.pseudo_labels = torch.tensor(pseudo_label, dtype=torch.long)
+        for k, l in zip(self.pseudo_labels.keys(), pseudo_label):
+            # self.pseudo_labels[k] = torch.tensor(l, dtype=torch.long)
+            self.pseudo_labels[k] = l
 
     def __get_nan_idx(self, input):
         is_nan = torch.isnan(input)

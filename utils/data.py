@@ -21,7 +21,8 @@ class ImageDataset(Dataset):
             for root, _, fnames in sorted(os.walk(target_dir, followlinks=True)):
                 for fname in sorted(fnames):
                     path = os.path.join(root, fname)
-                    item = path, class_index
+                    key = fname.split(".")[0]
+                    item = path, class_index, key
                     instances.append(item)
 
         self.samples = instances
@@ -33,7 +34,7 @@ class ImageDataset(Dataset):
 
     def __getitem__(self, idx):
         if self.mutual:
-            path, target = self.samples[idx]
+            path, target, key = self.samples[idx]
             with open(path, "rb") as f:
                 img_1 = Image.open(f).convert("RGB")
                 img_2 = img_1.copy()
@@ -42,10 +43,10 @@ class ImageDataset(Dataset):
                 img_1 = self.transform(img_1)
                 img_2 = self.transform(img_2)
 
-            return (img_1, img_2), target
+            return img_1, img_2, target, key
 
         else:
-            path, target = self.samples[idx]
+            path, target, key = self.samples[idx]
             with open(path, "rb") as f:
                 img = Image.open(f)
                 img = img.convert("RGB")
@@ -53,14 +54,7 @@ class ImageDataset(Dataset):
             if self.transform is not None:
                 img = self.transform(img)
 
-            return img, target
-
-            # if self.pseudo_labels is not None:
-            #     y_tilde = self.pseudo_labels[idx]
-            # else:
-            #     y_tilde = []
-
-            # return img, y_tilde
+            return img, target, key
 
 
 if __name__ == "__main__":
