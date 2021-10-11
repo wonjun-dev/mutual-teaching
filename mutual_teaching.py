@@ -1,3 +1,4 @@
+import os
 import copy
 from collections import OrderedDict
 
@@ -29,13 +30,16 @@ class MutualTeaching:
         self.lambda_tri = 0.5
         self.alpha = 0
         self.pseudo_labels = OrderedDict()
+        self.best_score = 100000
 
     def training_loop(self, train_loader, cluster_loader, epoch):
         # Generate hard pseudo label
         self._generate_pseudo_labels(cluster_loader, self.device)
         # iteration
         train_loader.dataset.mutual = True
-        print(self.pseudo_labels)
+
+        self.model_1.train()
+        self.model_2.train()
         for idx, (x_1, x_2, gt, key) in enumerate(train_loader):
             # y_tilde = torch.randint(0, 10, (32,))
             y_tilde = torch.tensor([self.pseudo_labels[k] for k in key], dtype=torch.long)
@@ -78,6 +82,12 @@ class MutualTeaching:
             self._mean_parameters(
                 self.model_2, self.mean_model_2, step=epoch * len(train_loader) + idx
             )
+
+            if loss.item() < self.best_score:
+                print(f"Save model...")
+                self.save_model(self.model_1, name=f"1_{epoch}")
+                self.save_model(self.model_1, name=f"2_{epoch}")
+                self.best_score = loss.item()
 
     def _forward(self, x_1, x_2):
         out_1 = self.model_1(x_1)
@@ -184,6 +194,8 @@ class MutualTeaching:
     def _generate_pseudo_labels(self, dataloader, device):
         print("Encoding features for clustering.")
         full_features = []
+        self.mean_model_1.eval()
+        self.mean_model_2.eval()
         for imgs, _, key in dataloader:
             imgs = imgs.to(device)
             self.mean_model_1(imgs)
@@ -205,3 +217,7 @@ class MutualTeaching:
     def __get_nan_idx(self, input):
         is_nan = torch.isnan(input)
         return is_nan.nonzero(as_tuple=True)[0]
+
+    def save_model(self, model, name):
+        os.makedirs("model", exist_ok=True)
+        torch.save(model.state_dict(), f"model/{name}.pt")

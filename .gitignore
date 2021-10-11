@@ -130,3 +130,7 @@ dmypy.json
 
 # datasets
 datasets/
+model/
+*.pt
+*.mat
+
