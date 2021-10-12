@@ -10,17 +10,22 @@ import numpy as np
 
 
 class MutualTeaching:
-    def __init__(self, model_1, model_2, model_cluster, optimizer, device):
+    """
+    MMT 구현 클래스
+    """
+
+    def __init__(self, model_1, model_2, model_cluster, optimizer, device, mmt=True):
         self.model_1 = model_1
         self.model_2 = model_2
         self.model_cluster = model_cluster
         self.mean_model_1 = copy.deepcopy(self.model_1)
         self.mean_model_2 = copy.deepcopy(self.model_2)
 
-        for param in self.mean_model_1.parameters():
-            param.detach_()
-        for param in self.mean_model_2.parameters():
-            param.detach_()
+        if mmt:
+            for param in self.mean_model_1.parameters():
+                param.detach_()
+            for param in self.mean_model_2.parameters():
+                param.detach_()
 
         self.optimizer = optimizer
         self.device = device
@@ -33,6 +38,9 @@ class MutualTeaching:
         self.best_score = 100000
 
     def noraml_training_loop(self, train_loader, epoch):
+        """
+        일반적인 지도학습 루프
+        """
 
         train_loader.dataset.mutual = False
         self.model_1.train()
@@ -49,8 +57,11 @@ class MutualTeaching:
                 self.best_score = loss.item()
 
     def training_loop(self, train_loader, cluster_loader, epoch):
+        """
+        비지도 MMT 학습 루프
+        """
         # Generate hard pseudo label
-        self._generate_pseudo_labels(cluster_loader, self.device)
+        self._generate_pseudo_labels(cluster_loader, self.device)  # 가상 라벨 생성
         # iteration
         train_loader.dataset.mutual = True
 
@@ -92,6 +103,7 @@ class MutualTeaching:
             self._step(loss)
 
             # self._mean_parameters()
+            # 모델 weight 평균화
             self._mean_parameters(
                 self.model_1, self.mean_model_1, step=epoch * len(train_loader) + idx
             )
