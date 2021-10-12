@@ -32,6 +32,22 @@ class MutualTeaching:
         self.pseudo_labels = OrderedDict()
         self.best_score = 100000
 
+    def noraml_training_loop(self, train_loader, epoch):
+
+        train_loader.dataset.mutual = False
+        self.model_1.train()
+        for idx, (x, gt, key) in enumerate(train_loader):
+            x, gt = x.to(self.device), gt.to(self.device)
+            out = self.model_1(x)
+            loss = self.loss_fn(out, gt)
+            print(f"loss: {loss.item()}, epoch: {epoch}")
+            self._step(loss)
+
+            if loss.item() < self.best_score:
+                print(f"Save model... loss: {self.best_score} -> {loss.item()}")
+                self.save_model(self.model_1, name=f"pretrain_{epoch}")
+                self.best_score = loss.item()
+
     def training_loop(self, train_loader, cluster_loader, epoch):
         # Generate hard pseudo label
         self._generate_pseudo_labels(cluster_loader, self.device)

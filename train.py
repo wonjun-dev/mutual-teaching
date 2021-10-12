@@ -12,8 +12,8 @@ from mutual_teaching import MutualTeaching
 def main():
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    model_1 = ReidResNet()
-    model_2 = ReidResNet()
+    model_1 = ReidResNet(num_classes=1501)
+    model_2 = ReidResNet(num_classes=1501)
     model_1.to(device)
     model_2.to(device)
     model_cluster = KMeansCluster(n_clusters=500)
@@ -71,7 +71,8 @@ def main():
     mt = MutualTeaching(model_1, model_2, model_cluster, optimizer, device)
 
     for e in range(100):
-        mt.training_loop(train_loader, cluster_loader, epoch=e)
+        mt.noraml_training_loop(train_loader, epoch=e)
+        # mt.training_loop(train_loader, cluster_loader, epoch=e)
 
 
 if __name__ == "__main__":

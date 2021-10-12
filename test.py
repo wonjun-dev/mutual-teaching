@@ -151,7 +151,7 @@ use_gpu = torch.cuda.is_available()
 # Load model
 # ---------------------------
 def load_network(network):
-    save_path = os.path.join("./model", "1_%s.pt" % opt.which_epoch)
+    save_path = os.path.join("./model", "pretrain_%s.pt" % opt.which_epoch)
     network.load_state_dict(torch.load(save_path))
     return network
 
@@ -252,7 +252,7 @@ print("-------test-----------")
 
 # if opt.fp16:
 #    model_structure = network_to_half(model_structure)
-model_structure = ReidResNet()
+model_structure = ReidResNet(num_classes=1501)
 model = load_network(model_structure)
 
 # Remove the final fc layer and classifier layer
